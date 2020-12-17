@@ -257,6 +257,12 @@ FreeRTOSConfig.h. */
 /* Capstone Autonomous Runway Detection - Constants */
 #define RUNWAY_FILE_NAME "res\\runway.bmp"
 #define CANNY_FILE_NAME "canny_image"
+#define NO_WAIT 0
+
+/* Capstone Autonomous Runway Detection - Global Variables */
+xQueueHandle xQueueNewRunwayImage;
+xQueueHandle xQueueNewCannyImage;
+xQueueHandle xQueueNewEncryptedImage;
 
 /*-----------------------------------------------------------*/
 
@@ -302,9 +308,10 @@ extern void vMultiTaskStdioWithCWDTest( const char *const pcMountPath, uint16_t 
 /*
  * Functions prototypes of Autonomous Runway Detection Project
  */
-
-static void tcpSendFileToServerTask();
+static void newRunwayImageReady();
 static void cannyProcessImage();
+static void rsaEncryptImage();
+static void tcpSendFileToServerTask();
 
 /*
  * The task that runs the FTP and HTTP servers.
@@ -397,11 +404,21 @@ TimerHandle_t xCheckTimer;
 	}
 	#endif
 
-	//TaskHandle_t tcp_send_file_handle;
-	//xTaskCreate(tcpSendFileToServerTask, (signed char*)"Communication", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
+	TaskHandle_t new_runway_image_task;
+	xTaskCreate(newRunwayImageReady, (signed char*)"New Runway Image", configMINIMAL_STACK_SIZE, NULL, 3, &new_runway_image_task);
 
 	TaskHandle_t canny_process_image_task;
 	xTaskCreate(cannyProcessImage, (signed char*)"Process Image with Canny", configMINIMAL_STACK_SIZE, NULL, 3, &canny_process_image_task);
+
+	TaskHandle_t rsa_encrypt_image_task;
+	xTaskCreate(rsaEncryptImage, (signed char*)"RSA Encrypt Image", configMINIMAL_STACK_SIZE, NULL, 3, &rsa_encrypt_image_task);
+
+	//TaskHandle_t tcp_send_file_handle;
+	//xTaskCreate(tcpSendFileToServerTask, (signed char*)"Send TCP File", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
+
+	xQueueNewRunwayImage = xQueueCreate(10, 30*sizeof(char));
+	xQueueNewCannyImage = xQueueCreate(10, 30*sizeof(char));
+	xQueueNewEncryptedImage = xQueueCreate(10, 30*sizeof(char));
 
 	/* Start the RTOS scheduler. */
 	FreeRTOS_debug_printf( ("vTaskStartScheduler\n") );
@@ -419,6 +436,51 @@ TimerHandle_t xCheckTimer;
 	}
 } //end of main
 /*-----------------------------------------------------------*/
+
+static void newRunwayImageReady() {
+
+	while (1) {
+		if (xQueueNewRunwayImage != 0)
+		{
+			printf("New runway image ready!!\n");
+			fflush(stdout);
+			/* Send the vector c to the queue */
+			if (xQueueSendToBack(xQueueNewRunwayImage, RUNWAY_FILE_NAME, NO_WAIT)!= pdPASS)
+			{
+				printf("Fail to send item to queue \n");
+			}
+			printf("Sendind complete!!\n\n");
+			fflush(stdout);
+		}
+		vTaskDelay(2000);
+	}
+}
+
+static void cannyProcessImage() {
+
+	char runway_file_name[30];
+
+	//runway_file_name = malloc(30 * sizeof(char));
+
+	while (1) {
+
+		if (xQueueReceive(xQueueNewRunwayImage, runway_file_name, NO_WAIT) == pdPASS)
+		{
+			printf("cannyProcessImage() - runway_file_name: %s\n\n", runway_file_name);
+			cannymain(RUNWAY_FILE_NAME);
+			fflush(stdout);
+		}
+		vTaskDelay(2000);
+	}
+}
+
+static void rsaEncryptImage() {
+
+	while (1) {
+		printf("rsaEncryptImage()\n");
+		vTaskDelay(2000);
+	}
+}
 
 static void tcpSendFileToServerTask()
 {
@@ -464,17 +526,17 @@ static void tcpSendFileToServerTask()
 
 			// Keep sending until the entire buffer has been sent.
 			/*while (xAlreadyTransmitted < 200) {
-				// How many bytes are left to send ? 
+				// How many bytes are left to send ?
 				xLenToSend = xTotalLengthToSend – xAlreadyTransmitted;
 				xBytesSent = FreeRTOS_send( xSocket, &(pcBufferToTransmit[xAlreadyTransmitted]), xLenToSend, 0);
 
 				if (xBytesSent >= 0) 				{
-					xAlreadyTransmitted += xBytesSent; // Data was sent successfully. 
+					xAlreadyTransmitted += xBytesSent; // Data was sent successfully.
 				}
 				else {
-					break; // Error – break out of the loop for graceful socket close. 
+					break; // Error – break out of the loop for graceful socket close.
 				}
-			}*/ 
+			}*/
 		}
 		else {
 			printf("faiô pra conectar - erro: %d\n", erro);
@@ -487,7 +549,7 @@ static void tcpSendFileToServerTask()
 		returning a FREERTOS_EINVAL error) before closing the socket. */
 		/* while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
 		{
-			// Wait for shutdown to complete.  
+			// Wait for shutdown to complete.
 			vTaskDelay(pdTICKS_TO_MS(250));
 
 			// Note – real applications should implement a timeout here, not just loop forever.
@@ -497,14 +559,6 @@ static void tcpSendFileToServerTask()
 		FreeRTOS_closesocket(xSocket);
 
 		vTaskDelay(5000);
-	}
-}
-
-static void cannyProcessImage() {
-
-	while (1) {
-		cannymain(RUNWAY_FILE_NAME);
-		vTaskDelay(2000);
 	}
 }
 
