@@ -109,6 +109,10 @@
 #include "TFTPServer.h"
 #include "demo_logging.h"
 
+/* Capstone Autonomous Runway Detection - includes */
+#include "rsa\rsa.h"
+#include "canny/canny.h"
+
 /* UDP command server task parameters. */
 #define mainUDP_CLI_TASK_PRIORITY						( tskIDLE_PRIORITY )
 #define mainUDP_CLI_PORT_NUMBER							( 5001UL )
@@ -250,6 +254,10 @@ FreeRTOSConfig.h. */
 #define mainLOG_TO_DISK_FILE 	pdFALSE
 #define mainLOG_TO_UDP 			pdFALSE
 
+/* Capstone Autonomous Runway Detection - Constants */
+#define RUNWAY_FILE_NAME "res\\runway.bmp"
+#define CANNY_FILE_NAME "canny_image"
+
 /*-----------------------------------------------------------*/
 
 /*
@@ -296,6 +304,7 @@ extern void vMultiTaskStdioWithCWDTest( const char *const pcMountPath, uint16_t 
  */
 
 static void tcpSendFileToServerTask();
+static void cannyProcessImage();
 
 /*
  * The task that runs the FTP and HTTP servers.
@@ -388,8 +397,11 @@ TimerHandle_t xCheckTimer;
 	}
 	#endif
 
-	TaskHandle_t tcp_send_file_handle;
-	xTaskCreate(tcpSendFileToServerTask, (signed char*)"Communication", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
+	//TaskHandle_t tcp_send_file_handle;
+	//xTaskCreate(tcpSendFileToServerTask, (signed char*)"Communication", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
+
+	TaskHandle_t canny_process_image_task;
+	xTaskCreate(cannyProcessImage, (signed char*)"Process Image with Canny", configMINIMAL_STACK_SIZE, NULL, 3, &canny_process_image_task);
 
 	/* Start the RTOS scheduler. */
 	FreeRTOS_debug_printf( ("vTaskStartScheduler\n") );
@@ -485,6 +497,14 @@ static void tcpSendFileToServerTask()
 		FreeRTOS_closesocket(xSocket);
 
 		vTaskDelay(5000);
+	}
+}
+
+static void cannyProcessImage() {
+
+	while (1) {
+		cannymain(RUNWAY_FILE_NAME);
+		vTaskDelay(2000);
 	}
 }
 
