@@ -424,42 +424,39 @@ pixel_t *canny_edge_detection(const pixel_t *in,
     return out;
 }
  
-int cannymain(char* input_file_name)
+char* cannymain(char* input_file_name)
 {
 
+    char new_canny_name[30];
     static bitmap_info_header_t ih;
     static int canny_edge_detection_image_count;
     const pixel_t *in_bitmap_data = load_bmp(input_file_name, &ih);
 
-    printf("Denis %s \n", input_file_name);
+    // printf("Debug - cannymain() - File name: %s \n", input_file_name);
 
     if (in_bitmap_data == NULL) {
         fprintf(stderr, "main: BMP image not loaded.\n");
-        return 1;
+        return 0;
     }
  
-    printf("Info: %d x %d x %d\n", ih.width, ih.height, ih.bitspp);
+    // printf("Info: %d x %d x %d\n", ih.width, ih.height, ih.bitspp);
  
     const pixel_t *out_bitmap_data =
         canny_edge_detection(in_bitmap_data, &ih, 40, 80, 1.0);
     if (out_bitmap_data == NULL) {
         fprintf(stderr, "main: failed canny_edge_detection.\n");
-        return 1;
+        return 0;
     }
 
-    char new_canny_name[15];
-    char encrypted_canny_image[25];
-
-    sprintf(new_canny_name, "res/out%d.bmp", canny_edge_detection_image_count);
-    sprintf(encrypted_canny_image, "res/encrypted%d.bmp", canny_edge_detection_image_count);
+    sprintf(new_canny_name, "res/decrypted%d.bmp", canny_edge_detection_image_count);
  
     if (save_bmp(new_canny_name, &ih, out_bitmap_data)) {
         fprintf(stderr, "main: BMP image not saved.\n");
-        return 1;
+        return 0;
     }
 
     free((pixel_t*)in_bitmap_data);
     free((pixel_t*)out_bitmap_data);
     canny_edge_detection_image_count++;
-    return 0;
+    return new_canny_name;
 }

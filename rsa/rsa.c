@@ -51,10 +51,12 @@ int RSAEncryptFile(char *input_file_name, char *encrypted_file_name) {
     int read_count = 0;
 
     printf("RSAEncryptFile filename: %s \n", input_file_name);
+    printf("RSAEncryptFile output filename: %s \n", encrypted_file_name);
+    fflush(stdout);
 
     // destroy contents of these files (from previous runs, if any)
-    output_file = fopen(encrypted_file_name, "w+");
-    fclose(output_file);
+    //output_file = fopen(encrypted_file_name, "w+");
+    //fclose(output_file);
 
     input_file = fopen(input_file_name, "rb");
     if (input_file == NULL) {

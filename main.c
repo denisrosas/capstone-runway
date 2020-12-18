@@ -447,7 +447,7 @@ static void newRunwayImageReady() {
 			/* Send the vector c to the queue */
 			if (xQueueSendToBack(xQueueNewRunwayImage, RUNWAY_FILE_NAME, NO_WAIT)!= pdPASS)
 			{
-				printf("Fail to send item to queue \n");
+				printf("Fail to send item to queue. Queue is Full! \n");
 			}
 			printf("Sendind complete!!\n\n");
 			fflush(stdout);
@@ -458,17 +458,27 @@ static void newRunwayImageReady() {
 
 static void cannyProcessImage() {
 
-	char runway_file_name[30];
-
-	//runway_file_name = malloc(30 * sizeof(char));
+	char runway_file_name[30], canny_file_name[30];
+	char *char_pointer;
 
 	while (1) {
 
 		if (xQueueReceive(xQueueNewRunwayImage, runway_file_name, NO_WAIT) == pdPASS)
 		{
-			printf("cannyProcessImage() - runway_file_name: %s\n\n", runway_file_name);
-			cannymain(RUNWAY_FILE_NAME);
-			fflush(stdout);
+			printf("Debug - cannyProcessImage() - runway_file_name: %s\n", runway_file_name);
+
+			//run canny algorithm on the runway image
+			char_pointer = cannymain(RUNWAY_FILE_NAME);
+			if (char_pointer == 0) //canny failed. Return
+				return;
+
+			//now we copy the string to a local pointer, as canny main will erase it when run again.
+			strcpy(canny_file_name, char_pointer);
+			if (xQueueSendToBack(xQueueNewCannyImage, canny_file_name, NO_WAIT) != pdPASS) {
+				printf("Fail to send item to queue. Queue is Full! \n");
+			} else {
+				printf("Debug - cannyProcessImage() - New canny image sent to queue: %s \n", canny_file_name);
+			}
 		}
 		vTaskDelay(2000);
 	}
@@ -476,8 +486,28 @@ static void cannyProcessImage() {
 
 static void rsaEncryptImage() {
 
+	char canny_file_name[30], encrypted_file_name[30];
+
 	while (1) {
 		printf("rsaEncryptImage()\n");
+		if (xQueueReceive(xQueueNewCannyImage, canny_file_name, NO_WAIT) == pdPASS)
+		{
+			printf("Debug - rsaEncryptImage() - Canny image received! - canny_file_name: %s\n", canny_file_name);
+			strcpy(encrypted_file_name, canny_file_name);
+			encrypted_file_name[4] = 'e'; encrypted_file_name[5] = 'n'; //change 'de'crypted to 'en'crypted
+			RSAEncryptFile(canny_file_name, encrypted_file_name);
+
+			if (xQueueSendToBack(xQueueNewEncryptedImage, encrypted_file_name, NO_WAIT) != pdPASS) {
+				printf("Fail to send item to xQueueNewEncryptedImage. Queue is Full! \n");
+			}
+			else {
+				printf("Debug - rsaEncryptImage() - New encrypted image sent to xQueueNewEncryptedImage: %s \n", encrypted_file_name);
+			}
+
+		}
+		else {
+			printf("Debug - rsaEncryptImage() - xQueueNewCannyImage is empty. No new images to process\n");
+		}
 		vTaskDelay(2000);
 	}
 }
