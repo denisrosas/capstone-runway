@@ -258,6 +258,7 @@ FreeRTOSConfig.h. */
 #define RUNWAY_FILE_NAME "res\\runway.bmp"
 #define CANNY_FILE_NAME "canny_image"
 #define NO_WAIT 0
+#define BUFFER_SIZE 1024
 
 /* Capstone Autonomous Runway Detection - Global Variables */
 xQueueHandle xQueueNewRunwayImage;
@@ -312,6 +313,7 @@ static void newRunwayImageReady();
 static void cannyProcessImage();
 static void rsaEncryptImage();
 static void tcpSendFileToServerTask();
+void deleteOldFiles();
 
 /*
  * The task that runs the FTP and HTTP servers.
@@ -404,6 +406,8 @@ TimerHandle_t xCheckTimer;
 	}
 	#endif
 
+	deleteOldFiles();
+
 	TaskHandle_t new_runway_image_task;
 	xTaskCreate(newRunwayImageReady, (signed char*)"New Runway Image", configMINIMAL_STACK_SIZE, NULL, 3, &new_runway_image_task);
 
@@ -413,8 +417,8 @@ TimerHandle_t xCheckTimer;
 	TaskHandle_t rsa_encrypt_image_task;
 	xTaskCreate(rsaEncryptImage, (signed char*)"RSA Encrypt Image", configMINIMAL_STACK_SIZE, NULL, 3, &rsa_encrypt_image_task);
 
-	//TaskHandle_t tcp_send_file_handle;
-	//xTaskCreate(tcpSendFileToServerTask, (signed char*)"Send TCP File", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
+	TaskHandle_t tcp_send_file_handle;
+	xTaskCreate(tcpSendFileToServerTask, (signed char*)"Send TCP File", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
 
 	xQueueNewRunwayImage = xQueueCreate(10, 30*sizeof(char));
 	xQueueNewCannyImage = xQueueCreate(10, 30*sizeof(char));
@@ -436,6 +440,10 @@ TimerHandle_t xCheckTimer;
 	}
 } //end of main
 /*-----------------------------------------------------------*/
+
+void deleteOldFiles() {
+	system("rm res/decrypted*.bmp res/encrypted*.bmp");
+}
 
 static void newRunwayImageReady() {
 
@@ -519,76 +527,84 @@ static void tcpSendFileToServerTask()
 	BaseType_t xAlreadyTransmitted = 0, xBytesSent = 0;
 	TaskHandle_t xRxTask = NULL;
 	size_t xLenToSend;
-	char teste[4];
+	FILE* input_file;
+	char buffer[BUFFER_SIZE];
+	char encrypted_file_name[30];
+	int read_count = 0;
 
-	int erro = 0;
+	while (1)
+	{
+		//check if there is a new file in queue
+		if (xQueueReceive(xQueueNewEncryptedImage, encrypted_file_name, NO_WAIT) == pdPASS) {
 
-	while (1) {
+			/* Set the IP address (192.168.0.200) and port (1500) of the remote socket
+			to which this client socket will transmit. */
+			xRemoteAddress.sin_port = FreeRTOS_htons(1500);
+			xRemoteAddress.sin_addr = FreeRTOS_inet_addr_quick(127, 0, 0, 1); //server is on localhost
 
-		/* Set the IP address (192.168.0.200) and port (1500) of the remote socket
-		to which this client socket will transmit. */
-		xRemoteAddress.sin_port = FreeRTOS_htons(1500);
-		xRemoteAddress.sin_addr = FreeRTOS_inet_addr_quick(127, 0, 0, 1); //server is on localhost
-		//xRemoteAddress.sin_addr = FreeRTOS_inet_addr_quick(192, 168, 142, 128); //server is on localhost
+			// Create a socket. 
+			xSocket = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_STREAM, FREERTOS_IPPROTO_TCP);
 
-		// Create a socket. 
-		xSocket = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_STREAM, FREERTOS_IPPROTO_TCP);
-
-		// Connect to the server.
-		erro = FreeRTOS_connect(xSocket, &xRemoteAddress, sizeof(xRemoteAddress));
-		if (erro == 0)
-		{
-			printf("mandando pacote 1\n");
-			teste[0] = 0x30;
-			teste[1] = 0x31;
-			teste[2] = 0x32;
-			teste[3] = 0x33;
-
-			xBytesSent = FreeRTOS_send(xSocket, &teste, 4, 0);
-
-			printf("mandando pacote 2\n");
-			teste[0] = 'D';
-			teste[1] = 'O';
-			teste[2] = 'N';
-			teste[3] = 'E';
-
-			xBytesSent = FreeRTOS_send(xSocket, &teste, 4, 0);
-
-			// Keep sending until the entire buffer has been sent.
-			/*while (xAlreadyTransmitted < 200) {
-				// How many bytes are left to send ?
-				xLenToSend = xTotalLengthToSend – xAlreadyTransmitted;
-				xBytesSent = FreeRTOS_send( xSocket, &(pcBufferToTransmit[xAlreadyTransmitted]), xLenToSend, 0);
-
-				if (xBytesSent >= 0) 				{
-					xAlreadyTransmitted += xBytesSent; // Data was sent successfully.
+			// Connect to the server.
+			if (FreeRTOS_connect(xSocket, &xRemoteAddress, sizeof(xRemoteAddress)) == 0)
+			{
+				input_file = fopen(encrypted_file_name, "rb");
+				if (input_file == NULL) {
+					printf("Error opening Source File.\n");
+					exit(1);
 				}
-				else {
-					break; // Error – break out of the loop for graceful socket close.
+
+				//first read before entering the loop
+				read_count = fread(buffer, sizeof(char), BUFFER_SIZE, input_file);
+
+				// this loop encrypts char by char of the buffer, and after write it to the encrypted file
+				while (read_count > 0) {
+
+					FreeRTOS_send(xSocket, buffer, read_count, 0);
+
+					//read BUFFER_SIZE characters from file
+					read_count = fread(buffer, sizeof(char), BUFFER_SIZE, input_file);
 				}
-			}*/
+
+				strcpy(buffer, "DONE");
+				xBytesSent = FreeRTOS_send(xSocket, buffer, 4, 0);
+
+				// Keep sending until the entire buffer has been sent.
+				/*while (xAlreadyTransmitted < 200) {
+					// How many bytes are left to send ?
+					xLenToSend = xTotalLengthToSend – xAlreadyTransmitted;
+					xBytesSent = FreeRTOS_send( xSocket, &(pcBufferToTransmit[xAlreadyTransmitted]), xLenToSend, 0);
+
+					if (xBytesSent >= 0) 				{
+						xAlreadyTransmitted += xBytesSent; // Data was sent successfully.
+					}
+					else {
+						break; // Error – break out of the loop for graceful socket close.
+					}
+				}*/
+			}
+			else {
+				printf("faiô pra conectar \n");
+			}
+
+			/* Initiate graceful shutdown. */
+			FreeRTOS_shutdown(xSocket, FREERTOS_SHUT_RDWR);
+
+			/* Wait for the socket to disconnect gracefully (indicated by FreeRTOS_recv()
+			returning a FREERTOS_EINVAL error) before closing the socket. */
+			/* while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
+			{
+				// Wait for shutdown to complete.
+				vTaskDelay(pdTICKS_TO_MS(250));
+
+				// Note – real applications should implement a timeout here, not just loop forever.
+			} */
+
+			// The socket has shut down and is safe to close. 
+			FreeRTOS_closesocket(xSocket);
+
+			vTaskDelay(2000);
 		}
-		else {
-			printf("faiô pra conectar - erro: %d\n", erro);
-		}
-
-		/* Initiate graceful shutdown. */
-		FreeRTOS_shutdown(xSocket, FREERTOS_SHUT_RDWR);
-
-		/* Wait for the socket to disconnect gracefully (indicated by FreeRTOS_recv()
-		returning a FREERTOS_EINVAL error) before closing the socket. */
-		/* while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
-		{
-			// Wait for shutdown to complete.
-			vTaskDelay(pdTICKS_TO_MS(250));
-
-			// Note – real applications should implement a timeout here, not just loop forever.
-		} */
-
-		// The socket has shut down and is safe to close. 
-		FreeRTOS_closesocket(xSocket);
-
-		vTaskDelay(5000);
 	}
 }
 
