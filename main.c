@@ -356,8 +356,7 @@ static TaskHandle_t xServerWorkTaskHandle = NULL;
  */
 int main( void )
 {
-const uint32_t ulLongTime_ms = 250UL, ulCheckTimerPeriod_ms = 15000UL;
-TimerHandle_t xCheckTimer;
+const uint32_t ulLongTime_ms = 250UL;
 
 	/*
 	 * Instructions for using this project are provided on:
@@ -381,20 +380,6 @@ TimerHandle_t xCheckTimer;
 	FreeRTOS_debug_printf( ( "FreeRTOS_IPInit\n" ) );
 	FreeRTOS_IPInit( ucIPAddress, ucNetMask, ucGatewayAddress, ucDNSServerAddress, ucMACAddress );
 
-	/* A timer is used to periodically check the example tasks are functioning
-	as expected.  First create the software timer ... */
-	/*xCheckTimer = xTimerCreate( "Check",				// Text name used for debugging only. 
-								pdMS_TO_TICKS( ulCheckTimerPeriod_ms ),
-								pdTRUE,					// This is an auto-reload timer. 
-								NULL,					// Parameter not used. 
-								prvCheckTimerCallback ); // The timer callback function. 
-
-	// ... assert if the timer was not created, ... */
-	// configASSERT( xCheckTimer );
-
-	/* ... then start the timer. */
-	// xTimerStart( xCheckTimer, 0 );
-
 	#if( ( mainCREATE_FTP_SERVER == 1 ) || ( mainCREATE_HTTP_SERVER == 1 ))
 	{
 		/* Create the task that handles the FTP and HTTP servers.  This will
@@ -406,8 +391,10 @@ TimerHandle_t xCheckTimer;
 	}
 	#endif
 
+	/* Capstone Autonomous Runway Detection - Delete the files of previous run*/
 	deleteOldFiles();
 
+	/* Capstone Autonomous Runway Detection - Starting all tasks */
 	TaskHandle_t new_runway_image_task;
 	xTaskCreate(newRunwayImageReady, (signed char*)"New Runway Image", configMINIMAL_STACK_SIZE, NULL, 3, &new_runway_image_task);
 
@@ -420,9 +407,10 @@ TimerHandle_t xCheckTimer;
 	TaskHandle_t tcp_send_file_handle;
 	xTaskCreate(tcpSendFileToServerTask, (signed char*)"Send TCP File", configMINIMAL_STACK_SIZE, NULL, 3, &tcp_send_file_handle);
 
+	/* Capstone Autonomous Runway Detection - Starting all queues */
 	xQueueNewRunwayImage = xQueueCreate(10, 30*sizeof(char));
 	xQueueNewCannyImage = xQueueCreate(10, 30*sizeof(char));
-	xQueueNewEncryptedImage = xQueueCreate(10, 30*sizeof(char));
+	xQueueNewEncryptedImage = xQueueCreate(30, 30*sizeof(char));
 
 	/* Start the RTOS scheduler. */
 	FreeRTOS_debug_printf( ("vTaskStartScheduler\n") );
@@ -445,6 +433,8 @@ void deleteOldFiles() {
 	system("rm res/decrypted*.bmp res/encrypted*.bmp");
 }
 
+/* Capstone Autonomous Runway Detection - This Task adds the new
+runway images to the xQueueNewRunwayImage */
 static void newRunwayImageReady() {
 
 	while (1) {
@@ -464,6 +454,9 @@ static void newRunwayImageReady() {
 	}
 }
 
+/* Capstone Autonomous Runway Detection - This Task reads from the xQueueNewRunwayImage.
+If a new image is ready, it processes the image  with Canny algorith and and sends
+the processed image to xQueueNewCannyImage */
 static void cannyProcessImage() {
 
 	char runway_file_name[30], canny_file_name[30];
@@ -492,6 +485,9 @@ static void cannyProcessImage() {
 	}
 }
 
+/* Capstone Autonomous Runway Detection - This Task reads from the xQueueNewCannyImage.
+If a new Canny image is ready, it encrypts the image  with RSA algorith and and sends
+the processed image to xQueueNewEncryptedImage */
 static void rsaEncryptImage() {
 
 	char canny_file_name[30], encrypted_file_name[30];
@@ -520,12 +516,12 @@ static void rsaEncryptImage() {
 	}
 }
 
+/* Capstone Autonomous Runway Detection - This Task reads from the xQueueNewEncryptedImage.
+If a new Encrypted image is ready, it sends the encrypted image to the Python server. */
 static void tcpSendFileToServerTask()
 {
 	Socket_t xSocket;
 	struct freertos_sockaddr xRemoteAddress;
-	BaseType_t xAlreadyTransmitted = 0, xBytesSent = 0;
-	TaskHandle_t xRxTask = NULL;
 	size_t xLenToSend;
 	FILE* input_file;
 	char buffer[BUFFER_SIZE];
@@ -567,44 +563,32 @@ static void tcpSendFileToServerTask()
 				}
 
 				strcpy(buffer, "DONE");
-				xBytesSent = FreeRTOS_send(xSocket, buffer, 4, 0);
+				FreeRTOS_send(xSocket, buffer, 4, 0);
 
-				// Keep sending until the entire buffer has been sent.
-				/*while (xAlreadyTransmitted < 200) {
-					// How many bytes are left to send ?
-					xLenToSend = xTotalLengthToSend – xAlreadyTransmitted;
-					xBytesSent = FreeRTOS_send( xSocket, &(pcBufferToTransmit[xAlreadyTransmitted]), xLenToSend, 0);
-
-					if (xBytesSent >= 0) 				{
-						xAlreadyTransmitted += xBytesSent; // Data was sent successfully.
-					}
-					else {
-						break; // Error – break out of the loop for graceful socket close.
-					}
-				}*/
 			}
 			else {
-				printf("faiô pra conectar \n");
+				printf("Failed to connect to the server \n");
 			}
 
 			/* Initiate graceful shutdown. */
 			FreeRTOS_shutdown(xSocket, FREERTOS_SHUT_RDWR);
 
-			/* Wait for the socket to disconnect gracefully (indicated by FreeRTOS_recv()
-			returning a FREERTOS_EINVAL error) before closing the socket. */
-			/* while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
+			/*while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
 			{
 				// Wait for shutdown to complete.
 				vTaskDelay(pdTICKS_TO_MS(250));
 
-				// Note – real applications should implement a timeout here, not just loop forever.
-			} */
+				// Note <96> real applications should implement a timeout here, not just loop forever.
+			}*/
 
 			// The socket has shut down and is safe to close. 
 			FreeRTOS_closesocket(xSocket);
 
-			vTaskDelay(2000);
 		}
+		else {
+			printf("No new images in to send to the server in xQueueNewEncryptedImage.\n");
+		}
+		vTaskDelay(2000);
 	}
 }
 
