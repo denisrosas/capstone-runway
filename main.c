@@ -520,13 +520,14 @@ static void rsaEncryptImage() {
 If a new Encrypted image is ready, it sends the encrypted image to the Python server. */
 static void tcpSendFileToServerTask()
 {
-	Socket_t xSocket;
+	Socket_t xClientSocket;
 	struct freertos_sockaddr xRemoteAddress;
 	size_t xLenToSend;
 	FILE* input_file;
 	char buffer[BUFFER_SIZE];
 	char encrypted_file_name[30];
 	int read_count = 0;
+	static const TickType_t xTimeOut = pdMS_TO_TICKS(1000);
 
 	while (1)
 	{
@@ -539,10 +540,17 @@ static void tcpSendFileToServerTask()
 			xRemoteAddress.sin_addr = FreeRTOS_inet_addr_quick(127, 0, 0, 1); //server is on localhost
 
 			// Create a socket. 
-			xSocket = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_STREAM, FREERTOS_IPPROTO_TCP);
+			xClientSocket = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_STREAM, FREERTOS_IPPROTO_TCP);
+
+			//setting the timeouts
+			FreeRTOS_setsockopt(xClientSocket, 0, FREERTOS_SO_RCVTIMEO, &xTimeOut,	sizeof(xTimeOut));
+			FreeRTOS_setsockopt(xClientSocket, 0, FREERTOS_SO_SNDTIMEO, &xTimeOut, sizeof(xTimeOut));
+
+			//binding to the PORT 1500
+			FreeRTOS_bind(xClientSocket, &xRemoteAddress, sizeof(xRemoteAddress));
 
 			// Connect to the server.
-			if (FreeRTOS_connect(xSocket, &xRemoteAddress, sizeof(xRemoteAddress)) == 0)
+			if (FreeRTOS_connect(xClientSocket, &xRemoteAddress, sizeof(xRemoteAddress)) == 0)
 			{
 				input_file = fopen(encrypted_file_name, "rb");
 				if (input_file == NULL) {
@@ -550,20 +558,24 @@ static void tcpSendFileToServerTask()
 					exit(1);
 				}
 
+				printf("tcpSendFileToServerTask() - file sending STARTED\n");
+
 				//first read before entering the loop
 				read_count = fread(buffer, sizeof(char), BUFFER_SIZE, input_file);
 
 				// this loop encrypts char by char of the buffer, and after write it to the encrypted file
 				while (read_count > 0) {
 
-					FreeRTOS_send(xSocket, buffer, read_count, 0);
+					FreeRTOS_send(xClientSocket, buffer, read_count, 0);
 
 					//read BUFFER_SIZE characters from file
 					read_count = fread(buffer, sizeof(char), BUFFER_SIZE, input_file);
 				}
 
 				strcpy(buffer, "DONE");
-				FreeRTOS_send(xSocket, buffer, 4, 0);
+				FreeRTOS_send(xClientSocket, buffer, 4, 0);
+
+				printf("tcpSendFileToServerTask() - file sending COMPLETED\n");
 
 			}
 			else {
@@ -571,19 +583,10 @@ static void tcpSendFileToServerTask()
 			}
 
 			/* Initiate graceful shutdown. */
-			FreeRTOS_shutdown(xSocket, FREERTOS_SHUT_RDWR);
-
-			/*while (FreeRTOS_recv(xSocket, pcBufferToTransmit, xTotalLengthToSend, 0) >= 0)
-			{
-				// Wait for shutdown to complete.
-				vTaskDelay(pdTICKS_TO_MS(250));
-
-				// Note <96> real applications should implement a timeout here, not just loop forever.
-			}*/
+			FreeRTOS_shutdown(xClientSocket, FREERTOS_SHUT_RDWR);
 
 			// The socket has shut down and is safe to close. 
-			FreeRTOS_closesocket(xSocket);
-
+			FreeRTOS_closesocket(xClientSocket);
 		}
 		else {
 			printf("No new images in to send to the server in xQueueNewEncryptedImage.\n");
