@@ -259,6 +259,9 @@ FreeRTOSConfig.h. */
 #define CANNY_FILE_NAME "canny_image"
 #define NO_WAIT 0
 #define BUFFER_SIZE 1024
+#define TOTAL_IMAGES 10
+#define PYTHON_SERVER_PORT 1500
+#define DELAY_SLEEP_TASKS 2000
 
 /* Capstone Autonomous Runway Detection - Global Variables */
 xQueueHandle xQueueNewRunwayImage;
@@ -429,59 +432,74 @@ const uint32_t ulLongTime_ms = 250UL;
 } //end of main
 /*-----------------------------------------------------------*/
 
+/* Capstone Autonomous Runway Detection - Function to delete 
+   the old files  of previous run*/
 void deleteOldFiles() {
 	system("rm res/decrypted*.bmp res/encrypted*.bmp");
 }
 
 /* Capstone Autonomous Runway Detection - This Task adds the new
-runway images to the xQueueNewRunwayImage */
+   runway images to the xQueueNewRunwayImage */
 static void newRunwayImageReady() {
+
+	unsigned int runway_image_count = 0;
 
 	while (1) {
 		if (xQueueNewRunwayImage != 0)
 		{
-			printf("New runway image ready!!\n");
+			printf("newRunwayImageReady() - New runway image is ready!!\n");
 			fflush(stdout);
 			/* Send the vector c to the queue */
 			if (xQueueSendToBack(xQueueNewRunwayImage, RUNWAY_FILE_NAME, NO_WAIT)!= pdPASS)
 			{
 				printf("Fail to send item to queue. Queue is Full! \n");
+				break;
 			}
-			printf("Sendind complete!!\n\n");
+			printf("newRunwayImageReady() - New image sent to Canny processing\n");
 			fflush(stdout);
 		}
-		vTaskDelay(2000);
+		runway_image_count++;
+		if (runway_image_count == TOTAL_IMAGES)
+			break;
+		vTaskDelay(DELAY_SLEEP_TASKS);
 	}
 }
 
 /* Capstone Autonomous Runway Detection - This Task reads from the xQueueNewRunwayImage.
-If a new image is ready, it processes the image  with Canny algorith and and sends
+If a new image is ready, it processes the image  with Canny algorithm and and sends
 the processed image to xQueueNewCannyImage */
 static void cannyProcessImage() {
 
 	char runway_file_name[30], canny_file_name[30];
-	char *char_pointer;
+	char *temp_filename;
 
 	while (1) {
 
 		if (xQueueReceive(xQueueNewRunwayImage, runway_file_name, NO_WAIT) == pdPASS)
 		{
-			printf("Debug - cannyProcessImage() - runway_file_name: %s\n", runway_file_name);
+			printf("cannyProcessImage() - runway_file_name: %s\n", runway_file_name);
 
 			//run canny algorithm on the runway image
-			char_pointer = cannymain(RUNWAY_FILE_NAME);
-			if (char_pointer == 0) //canny failed. Return
-				return;
+			temp_filename = cannymain(RUNWAY_FILE_NAME);
+			if (temp_filename == NULL) { //canny failed. Return
+				printf("cannyProcessImage() - Canny Failed! Closing cannyProcessImage Task\n");
+				fflush(stdout);
+				break;
+			}
 
 			//now we copy the string to a local pointer, as canny main will erase it when run again.
-			strcpy(canny_file_name, char_pointer);
+			strcpy(canny_file_name, temp_filename);
 			if (xQueueSendToBack(xQueueNewCannyImage, canny_file_name, NO_WAIT) != pdPASS) {
-				printf("Fail to send item to queue. Queue is Full! \n");
+				printf("cannyProcessImage() - Fail to send item to queue. Queue is Full! \n");
+				break;
 			} else {
-				printf("Debug - cannyProcessImage() - New canny image sent to queue: %s \n", canny_file_name);
+				printf("cannyProcessImage() - cannyProcessImage() - New canny image sent to queue: %s \n", canny_file_name);
 			}
 		}
-		vTaskDelay(2000);
+		else {
+			printf("cannyProcessImage() - xQueueNewRunwayImage is empty. No new images to process\n");
+		}
+		vTaskDelay(DELAY_SLEEP_TASKS);
 	}
 }
 
@@ -496,23 +514,24 @@ static void rsaEncryptImage() {
 		printf("rsaEncryptImage()\n");
 		if (xQueueReceive(xQueueNewCannyImage, canny_file_name, NO_WAIT) == pdPASS)
 		{
-			printf("Debug - rsaEncryptImage() - Canny image received! - canny_file_name: %s\n", canny_file_name);
+			printf("rsaEncryptImage() - Canny image received! - canny_file_name: %s\n", canny_file_name);
 			strcpy(encrypted_file_name, canny_file_name);
 			encrypted_file_name[4] = 'e'; encrypted_file_name[5] = 'n'; //change 'de'crypted to 'en'crypted
 			RSAEncryptFile(canny_file_name, encrypted_file_name);
 
 			if (xQueueSendToBack(xQueueNewEncryptedImage, encrypted_file_name, NO_WAIT) != pdPASS) {
-				printf("Fail to send item to xQueueNewEncryptedImage. Queue is Full! \n");
+				printf("rsaEncryptImage() - Fail to send item to xQueueNewEncryptedImage. Queue is Full! \n");
+				break;
 			}
 			else {
-				printf("Debug - rsaEncryptImage() - New encrypted image sent to xQueueNewEncryptedImage: %s \n", encrypted_file_name);
+				printf("rsaEncryptImage() - New encrypted image sent to xQueueNewEncryptedImage: %s \n", encrypted_file_name);
 			}
 
 		}
 		else {
-			printf("Debug - rsaEncryptImage() - xQueueNewCannyImage is empty. No new images to process\n");
+			printf("rsaEncryptImage() - xQueueNewCannyImage is empty. No new images to process\n");
 		}
-		vTaskDelay(2000);
+		vTaskDelay(DELAY_SLEEP_TASKS);
 	}
 }
 
@@ -528,6 +547,7 @@ static void tcpSendFileToServerTask()
 	char encrypted_file_name[30];
 	int read_count = 0;
 	static const TickType_t xTimeOut = pdMS_TO_TICKS(1000);
+	unsigned int encrypted_image_count = 0;
 
 	while (1)
 	{
@@ -536,7 +556,7 @@ static void tcpSendFileToServerTask()
 
 			/* Set the IP address (192.168.0.200) and port (1500) of the remote socket
 			to which this client socket will transmit. */
-			xRemoteAddress.sin_port = FreeRTOS_htons(1500);
+			xRemoteAddress.sin_port = FreeRTOS_htons(PYTHON_SERVER_PORT);
 			xRemoteAddress.sin_addr = FreeRTOS_inet_addr_quick(127, 0, 0, 1); //server is on localhost
 
 			// Create a socket. 
@@ -563,7 +583,7 @@ static void tcpSendFileToServerTask()
 				//first read before entering the loop
 				read_count = fread(buffer, sizeof(char), BUFFER_SIZE, input_file);
 
-				// this loop encrypts char by char of the buffer, and after write it to the encrypted file
+				// this loop sends to the server every piece of the file that was read
 				while (read_count > 0) {
 
 					FreeRTOS_send(xClientSocket, buffer, read_count, 0);
@@ -573,13 +593,14 @@ static void tcpSendFileToServerTask()
 				}
 
 				strcpy(buffer, "DONE");
-				FreeRTOS_send(xClientSocket, buffer, 4, 0);
+				FreeRTOS_send(xClientSocket, buffer, 4, 0); //Sending "DONE" to close the file
 
 				printf("tcpSendFileToServerTask() - file sending COMPLETED\n");
 
 			}
 			else {
-				printf("Failed to connect to the server \n");
+				printf("tcpSendFileToServerTask() - Failed to connect to the server \n");
+				break;
 			}
 
 			/* Initiate graceful shutdown. */
@@ -587,11 +608,15 @@ static void tcpSendFileToServerTask()
 
 			// The socket has shut down and is safe to close. 
 			FreeRTOS_closesocket(xClientSocket);
+
+			encrypted_image_count++;
+			if (encrypted_image_count == TOTAL_IMAGES)
+				return;
 		}
 		else {
-			printf("No new images in to send to the server in xQueueNewEncryptedImage.\n");
+			printf("tcpSendFileToServerTask() - No new images in to send to the server in xQueueNewEncryptedImage.\n");
 		}
-		vTaskDelay(2000);
+		vTaskDelay(DELAY_SLEEP_TASKS);
 	}
 }
 
