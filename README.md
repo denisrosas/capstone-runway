@@ -3,6 +3,12 @@ This is my Capstone project for the Capstone Runway detection Project made by EI
 
 https://www.coursera.org/learn/autonomous-runway-detection
 
+The purporse is to create a FreeRTOS project that: 
+1) Get images from an Airplane camera that captures images of the runway during landing
+2) Use the canny algorith to generate an image with only the Edges
+3) encrypt that image using the RSA algorithm
+4) send the encrypted file to a server by TCP connection
+
 Instructions – How to Run the project
 Pre-requirements:
 1. You must have Visual Studio Communuity 2019 Installed. If you don’t install it from this link
